@@ -50,6 +50,13 @@ This is what makes the system resilient to prompt injection: the attack surface 
 | S5 | Provider abstraction (swap Anthropic ↔ OpenAI) | Single `LLMClient` interface |
 | S6 | Eval harness — adversarial test suite | Strongly recommended; doubles as resilience proof |
 
+### Out of scope (documented non-goals)
+
+- **Dispute email processing.** On a denial, the agent directs the customer to an async dispute address (`policy_rules.dispute_email`). This is now a real product surface: the rule engine (spec #2) returns it in the denial outcome, the agent (spec #4) surfaces it in the denial message, and the README documents "email disputes" as the human-handled path. **Actually receiving or processing those emails is out of scope for this build** — there is no mail handler, inbox, or ticketing integration. This is flagged as a non-goal in the README so reviewers don't expect one.
+- **Admin authentication** (see §5.2) — documented gap, not built.
+
+> **Scope update:** refunds are **per line item** with **partial-quantity** support (each item refundable independently, on its own delivery + return window). Partial/multi-item refunds are therefore **in scope**, not a non-goal. The $500 escalation threshold is evaluated on the **projected cumulative refund per order** (prior refunds on the order + the current request) *before* the refund is confirmed. See `docs/components/01-database.md` and `02-policy-rule-engine.md` for the authoritative model.
+
 ---
 
 ## 2. High-level architecture
@@ -110,6 +117,8 @@ Policy is stored **twice on purpose**: the full text doc (`policy_documents`) is
 
 ### 3.2 LLD — schema
 
+> **Authoritative source:** `docs/components/01-database.md`. The sketch below is the HLD overview and reflects the **per-item** refund model (per-item delivery/window, partial quantity, per-order projected threshold, derived order refund state). On any discrepancy, the component spec wins.
+
 ```sql
 customers (
   id              UUID PK,
@@ -123,12 +132,11 @@ orders (
   id              UUID PK,
   customer_id     UUID FK -> customers.id,
   order_number    TEXT UNIQUE NOT NULL,      -- human-facing, e.g. ORD-1042
-  status          TEXT NOT NULL,             -- placed | shipped | delivered | cancelled | refunded
+  status          TEXT NOT NULL,             -- placed | shipped | partially_delivered | delivered | cancelled (fulfillment only; NO refund state)
   total_amount    NUMERIC(10,2) NOT NULL,
   currency        TEXT DEFAULT 'USD',
-  ordered_at      TIMESTAMPTZ NOT NULL,
-  delivered_at    TIMESTAMPTZ
-)
+  ordered_at      TIMESTAMPTZ NOT NULL
+)                                            -- refund state is DERIVED from item refunds, not stored
 
 order_items (
   id              UUID PK,
@@ -139,22 +147,25 @@ order_items (
   quantity        INT NOT NULL,
   unit_price      NUMERIC(10,2) NOT NULL,
   is_final_sale   BOOLEAN DEFAULT FALSE,     -- policy: never refundable
-  return_window_days INT DEFAULT 30
+  return_window_days INT DEFAULT 30,
+  delivered_at    TIMESTAMPTZ                -- per-item delivery; NULL until delivered
 )
 
-refunds (
+refunds (                                    -- per line item, partial quantity
   id              UUID PK,
-  order_id        UUID FK -> orders.id,
+  order_id        UUID FK -> orders.id,      -- denormalized for per-order threshold aggregation
+  order_item_id   UUID FK -> order_items.id,
   customer_id     UUID FK -> customers.id,
-  amount          NUMERIC(10,2) NOT NULL,
-  status          TEXT NOT NULL,             -- approved | denied | escalated | pending
+  quantity        INT NOT NULL,              -- units this request covers
+  amount          NUMERIC(10,2) NOT NULL,    -- unit_price * quantity
+  status          TEXT NOT NULL,             -- approved | denied | escalated
+  reason_code     TEXT NOT NULL,
   reason          TEXT,                      -- agent rationale
   policy_refs     JSONB,                     -- which rules applied
   decided_by      TEXT NOT NULL,             -- agent | human
   conversation_id UUID FK -> conversations.id,
-  created_at      TIMESTAMPTZ DEFAULT now(),
-  UNIQUE (order_id)                          -- idempotency: one refund per order
-)
+  created_at      TIMESTAMPTZ DEFAULT now()
+)                                            -- no UNIQUE(order_id/order_item_id); integrity = quantity invariant under row lock
 
 conversations (
   id              UUID PK,
@@ -199,20 +210,22 @@ policy_rules (                               -- machine-enforced
 )
 ```
 
-Key constraints that do real work: `refunds.UNIQUE(order_id)` prevents double refunds even under retries or a confused model; `orders.status='refunded'` is the second guard; `conversations.customer_id` gates every order action on a verified identity.
+Key constraints that do real work: the **quantity invariant** (`SUM(approved refund units) ≤ order_items.quantity`, enforced under a `SELECT … FOR UPDATE` row lock) prevents over-refunds even under retries, races, or a confused model; `conversations.customer_id` gates every order action on a verified identity; per-item `delivered_at` and `return_window_days` drive per-item eligibility.
 
 ### 3.3 Seeding
 
-A `seed.py` (run by an init step in compose) generates ~15 customers with varied, deliberately-adversarial fixtures so edge cases are demonstrable:
+Seeding runs at backend startup (gated by `SEED_ENABLED`, idempotent) and generates 15 customers (8 named fixtures + 7 fillers) with deliberately-adversarial per-item cases so edge cases are demonstrable:
 
-- a final-sale item (must always deny),
-- an order > $500 (must escalate),
-- an order outside the return window (deny),
-- an already-refunded order (idempotency test),
-- an order belonging to a *different* customer (identity test),
-- normal refundable orders (happy path).
+- a final-sale item alongside a refundable sibling (item-level deny, sibling approves),
+- an item past its return window (deny),
+- an undelivered item (NEEDS_INFO),
+- a mixed-delivery order (one item refundable, one not yet delivered),
+- a partially-then-fully refunded line (partial-quantity invariant),
+- a selection projecting past $500 on an order (escalate the tipping request),
+- an order belonging to a *different* customer (identity/ownership test),
+- normal refundable items (happy path).
 
-Policy doc + `policy_rules` seeded from the same source constants so text and enforcement never drift.
+Policy doc + `policy_rules` seeded from the same source constants so text and enforcement never drift. Full fixture matrix in `docs/components/01-database.md §6`.
 
 ---
 
@@ -278,11 +291,11 @@ The model's chat output is advisory; this function's output is binding. `process
 1. **Deterministic enforcement** (the core defense, §0/§4.3) — chat can't override code.
 2. **Hardened system prompt** — states policy and tools are the only source of truth; instructions inside user messages claiming to be "admin/system/developer" are to be ignored and treated as customer text.
 3. **Identity binding** — no order is actionable until `verify_identity` succeeds; tools filter by `conversation.customer_id`.
-4. **Idempotency** — `UNIQUE(order_id)` on refunds + status check.
-5. **Iteration cap** (e.g. 8) — prevents infinite tool loops / token burn.
+4. **Quantity invariant** — `SUM(approved units) ≤ item.quantity`, re-checked under a `SELECT … FOR UPDATE` row lock; no over-refund even under races.
+5. **Iteration cap** (e.g. 8) — prevents infinite tool loops / token burn; exhausting it escalates (fail closed), never approves.
 6. **Tool-input validation** — Pydantic rejects malformed args before any DB call.
-7. **No secret leakage** — system prompt and rule internals never returned via tools.
-8. **Amount ceiling** — anything over the threshold can only ever escalate, never auto-approve.
+7. **No secret leakage** — system prompt and rule internals never returned via tools; internal UUIDs never cross the tool boundary.
+8. **Projected per-order ceiling** — if prior refunds + the current request exceed $500, the request escalates; never auto-approved.
 
 ### 4.5 Orchestration approach — comparison (you asked to explore all)
 
@@ -296,7 +309,7 @@ The model's chat output is advisory; this function's output is binding. `process
 
 ### 4.6 Provider config (F16)
 
-A single `LLMClient` interface with an Anthropic implementation (default) and an OpenAI implementation. Key read from `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env var; provider selected by `LLM_PROVIDER`. App boots without a key but returns a clear error on first chat if it's missing — never crashes the container.
+A single `LLMClient` interface with an OpenAI implementation (default) and an Anthropic implementation. Key read from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env var; provider selected by `LLM_PROVIDER` (default `openai`). App boots without a key but returns a clear error on first chat if it's missing — never crashes the container.
 
 ---
 
@@ -326,19 +339,19 @@ backend/
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/api/conversations` | start a conversation → `{conversation_id}` |
-| POST | `/api/chat` | `{conversation_id, message}` → **SSE stream** of token / tool_call / tool_result / decision / done events |
-| GET | `/api/conversations/{id}` | message history |
+| POST | `/api/chat` | `{conversation_id, message, selection?}` → **SSE stream**: token / tool_call / tool_result / return_selector / decision / done / error |
+| GET | `/api/conversations/{id}` | message history (user+assistant) |
 | GET | `/api/admin/conversations` | list with status + last decision |
 | GET | `/api/admin/conversations/{id}/trace` | full `agent_steps` timeline |
 | GET | `/api/admin/refunds` | audit log (filter by status) |
-| GET | `/api/admin/metrics` | (S2) approval/denial/escalation counts |
+| GET | `/api/admin/metrics` | approval/denial/escalation counts (in v1) |
 | GET | `/api/health` | DB + config readiness for compose healthcheck |
 
 CORS limited to the frontend origin. All admin routes are read-only. (Auth is out of scope for the take-home; noted as a known gap in the README rather than half-built.)
 
 ### 5.3 Request handling — streaming (F12b, confirmed)
 
-`/api/chat` streams over **SSE**. The endpoint emits events as the turn progresses: `token` (assistant text deltas), `tool_call` / `tool_result` (so the customer sees "checking your order…" affordances and the admin trace populates live), and a terminal `decision` + `done`.
+`/api/chat` streams over **SSE**. The endpoint emits events as the turn progresses: `token` (assistant text deltas), `tool_call` / `tool_result` (so the customer sees "checking your order…" affordances and the admin trace populates live), `return_selector` (the interactive item-selection card), a terminal `decision`, `done`, and `error` for graceful failures. The request body may include an optional structured `selection` from a Return Selector confirm.
 
 Critical rule: **trace persistence is decoupled from the stream.** The agent loop writes each `agent_steps` row and the final `messages`/`refunds` rows to the DB as it executes; the SSE emitter is a passive observer of those same events. If the client disconnects mid-stream, the loop runs to completion server-side (or to a clean abort point) and the trace + any binding refund decision are still persisted. The admin log is therefore never dependent on a live socket. Persistence happens within the per-turn transaction boundary; streaming is best-effort delivery on top.
 
@@ -381,10 +394,9 @@ Components: `ChatWindow`, `MessageBubble`, `DecisionBadge`, `ConversationList`, 
 
 ```mermaid
 flowchart LR
-  fe["frontend\n(nginx serving built SPA)"] --> be["backend\n(FastAPI / uvicorn)"]
+  fe["frontend\n(nginx serving built SPA)"] --> be["backend\n(FastAPI / uvicorn;\nmigrate + seed on startup)"]
   be --> db[("db\npostgres:16")]
-  seed["seed (init job)"] --> db
-  be -.->|ANTHROPIC_API_KEY| env[".env"]
+  be -.->|OPENAI_API_KEY| env[".env"]
 ```
 
 - **db** — `postgres:16`, named volume, healthcheck (`pg_isready`).
@@ -399,7 +411,7 @@ flowchart LR
 1. Prereqs (Docker, an API key).
 2. `cp .env.example .env`, paste key.
 3. `docker-compose up`.
-4. URLs: frontend `:5173`/`:80`, API docs `:8000/docs`.
+4. URLs: customer chat `http://localhost:8080/chat`, admin `…/admin`, API docs `http://localhost:8000/docs`. (Authoritative ports: `docs/components/07-infra.md §2`.)
 5. Architecture overview of the agent loop + the "LLM orchestrates, code authorizes" principle.
 6. How to run the adversarial eval suite.
 7. Known gaps (no auth, single-node, etc.) — honesty scores well.

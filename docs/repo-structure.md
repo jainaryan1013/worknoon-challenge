@@ -153,7 +153,7 @@ apps/frontend/
 │   ├── App.tsx                  # router: /chat, /admin
 │   │
 │   ├── api/
-│   │   ├── generated/           # TS client generated from backend OpenAPI (git-ignored or committed)
+│   │   ├── generated/           # TS client generated from backend OpenAPI (committed; regen via make gen-client)
 │   │   └── client.ts            # thin wrapper: base URL, SSE helper, error handling
 │   │
 │   ├── features/
@@ -224,11 +224,15 @@ make lint          # ruff/mypy + eslint/tsc
 **`.env.example`** (root, consumed by compose) documents every variable:
 
 ```
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=
+LLM_PROVIDER=openai            # default; or 'anthropic'
 OPENAI_API_KEY=
-SEED_ENABLED=true
+ANTHROPIC_API_KEY=
+LLM_MODEL=                     # optional override; sensible per-provider default
+LLM_TEMPERATURE=0
+LLM_MAX_TOKENS=1024
 MAX_AGENT_ITERATIONS=8
+HISTORY_LIMIT=-1               # -1 = unlimited (demo)
+SEED_ENABLED=true
 POSTGRES_USER=refund
 POSTGRES_PASSWORD=refund
 POSTGRES_DB=refund
@@ -245,6 +249,6 @@ POSTGRES_DB=refund
 
 ---
 
-## 8. Note / open question
+## 8. Resolved
 
-`src/api/generated/` — commit it or git-ignore + generate on build? Committing makes the repo work without running the generator (safer for reviewers cloning fresh); git-ignoring keeps the tree clean but adds a build step. **Recommendation: commit it**, regenerate via `make gen-client`, so `docker-compose up` never depends on a codegen step succeeding. Your call.
+`src/api/generated/` is **committed** to the repo and regenerated via `make gen-client`. `docker-compose up` never depends on a codegen step succeeding — reviewers cloning fresh get a working tree.
