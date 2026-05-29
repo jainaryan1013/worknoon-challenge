@@ -1,0 +1,39 @@
+[project]
+name = "refund-agent-backend"
+version = "0.1.0"
+description = "AI customer-support agent that processes e-commerce refunds (backend + agent)."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "sse-starlette>=2.0",
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "psycopg[binary]>=3.1",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "openai>=1.30",
+  "anthropic>=0.25",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "httpx>=0.27",
+  "ruff>=0.4",
+  "mypy>=1.10",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+markers = ["llm: end-to-end tests that call a real LLM provider (opt-in; need an API key)"]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true

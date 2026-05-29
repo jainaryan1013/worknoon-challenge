@@ -1,0 +1,3 @@
+# Curated adversarial prompt corpus (20 entries) — see docs/components/08-adversarial-eval-suite.md §3.2.
+# TODO: populate 20 attacks. Each: {id, prompt, expected_invariant}.
+attacks: []
