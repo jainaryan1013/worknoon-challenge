@@ -44,6 +44,27 @@ make test-adv        # deterministic enforcement + invariants (no key needed)
 
 See [`docs/components/08-adversarial-eval-suite.md`](docs/components/08-adversarial-eval-suite.md).
 
+## Testing
+
+All tests run inside Docker — no host Python or Node needed.
+
+```bash
+make test        # backend (pytest + ephemeral Postgres) then frontend (tsc + vitest)
+make test-e2e    # browser end-to-end (Playwright) against the full stack — dev-only
+make smoke       # bring the production stack up and assert /api/health is ok
+```
+
+`make test` and `make test-e2e` run the agent with a **deterministic fake LLM**
+(`LLM_PROVIDER=fake`) so flows are reproducible and need no API key. The fake is
+test/demo scaffolding only — it still routes every refund through the real rule
+engine and tools, so authorization is exercised exactly as in production. The
+Playwright suite writes milestone screenshots + traces to `apps/e2e/artifacts/`
+for manual review. Playwright is a development dependency and is **never** part
+of the shipped `docker-compose.yml` image.
+
+Validate real agent behaviour at the end with a genuine key (`LLM_PROVIDER=openai`
+or `anthropic`) via `docker-compose up`.
+
 ## Configuration
 
 All variables are documented in [`.env.example`](.env.example) and `docs/components/07-infra.md §6`.

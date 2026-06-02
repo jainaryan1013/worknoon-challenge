@@ -8,6 +8,13 @@ __pycache__/
 # Node
 node_modules/
 dist/
+# E2E artifacts (screenshots, traces, report)
+apps/e2e/artifacts/*
+!apps/e2e/artifacts/.gitkeep
+# Generated adversarial report
+apps/backend/adversarial-report.md
+# Aggregated test report
+reports/
 # Env & secrets
 .env
 *.local

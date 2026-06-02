@@ -31,3 +31,16 @@ services:
       - ./apps/backend:/app          # live source + write generated migrations back
     working_dir: /app
     command: ["pytest", "-q"]
+
+  # Frontend tests (tsc + vitest). Under the "fe" profile so a plain `up` runs
+  # only the backend stack; `make test` invokes this with `run` after backend.
+  frontend-test:
+    build:
+      context: .
+      dockerfile: infra/docker/frontend-test.Dockerfile
+    profiles: ["fe"]
+    volumes:
+      - ./apps/frontend:/app
+      - /app/node_modules            # keep the image's deps; don't shadow with the mount
+    working_dir: /app
+    command: ["sh", "-c", "npm run lint && npm test"]

@@ -26,12 +26,15 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://refund:refund@db:5432/refund"
 
     # --- LLM provider ---
-    llm_provider: Literal["openai", "anthropic"] = "openai"
+    # "fake" is a deterministic test/demo provider (no API key, scripted flows).
+    llm_provider: Literal["openai", "anthropic", "fake"] = "openai"
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     llm_model: str | None = None
     llm_temperature: float = 0.0
-    llm_max_tokens: int = 1024
+    # Reasoning models (gpt-5/o-series) bill hidden reasoning against this cap,
+    # so keep headroom for a visible answer after the reasoning tokens.
+    llm_max_tokens: int = 2048
 
     # --- Agent loop ---
     max_agent_iterations: int = 8
@@ -43,7 +46,10 @@ class Settings(BaseSettings):
 
     @property
     def llm_configured(self) -> bool:
-        """Whether a usable API key is present for the selected provider."""
+        """Whether a usable API key is present for the selected provider.
+        The fake provider needs no key, so it always reports configured."""
+        if self.llm_provider == "fake":
+            return True
         if self.llm_provider == "openai":
             return bool(self.openai_api_key)
         return bool(self.anthropic_api_key)

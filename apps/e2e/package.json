@@ -1,0 +1,11 @@
+{
+  "name": "refund-agent-e2e",
+  "private": true,
+  "description": "Dev-only Playwright end-to-end tests. Not part of the shipped app.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.49.0"
+  }
+}

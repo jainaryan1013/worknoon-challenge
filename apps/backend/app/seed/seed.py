@@ -7,10 +7,10 @@ entrypoint without duplicating data. Gated by SEED_ENABLED at the entrypoint.
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,8 +24,6 @@ from app.models import (
     Refund,
 )
 from app.seed import fixtures, policy_source
-
-log = logging.getLogger(__name__)
 
 
 def _days_ago(n: int | None) -> datetime | None:
@@ -117,16 +115,18 @@ def run(session: Session) -> bool:
     """
     already = session.scalar(select(Customer.id).limit(1))
     if already is not None:
-        log.info("seed: customers already present, skipping")
+        logger.info("seed: customers already present, skipping")
         return False
     _seed_policy(session)
     _seed_customers(session)
-    log.info("seed: inserted policy + fixtures")
+    logger.info("seed: inserted policy + fixtures")
     return True
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    from app.core.logging import setup_logging
+
+    setup_logging()
     with SessionLocal() as session:
         seeded = run(session)
         session.commit()

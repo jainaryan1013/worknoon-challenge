@@ -1,0 +1,60 @@
+# Dev-only E2E stack — full app (db + backend + nginx frontend) driven by a
+# Playwright runner, with a DETERMINISTIC fake LLM so flows are reproducible and
+# need no API key. This file is never used to ship the app; the production stack
+# is docker-compose.yml. Run: make test-e2e
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: refund
+      POSTGRES_PASSWORD: refund
+      POSTGRES_DB: refund
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U refund -d refund"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: infra/docker/backend.Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://refund:refund@db:5432/refund
+      LLM_PROVIDER: fake          # deterministic; no API key needed
+      SEED_ENABLED: "true"
+      FRONTEND_ORIGIN: http://frontend
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: infra/docker/frontend.Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  e2e:
+    build:
+      context: .
+      dockerfile: infra/docker/e2e.Dockerfile
+    environment:
+      E2E_BASE_URL: http://frontend:80
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    volumes:
+      - ./apps/e2e/artifacts:/e2e/artifacts   # screenshots/traces/report to host
+    command: ["bash", "run.sh"]               # wait for frontend, then run tests
