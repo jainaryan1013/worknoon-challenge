@@ -82,11 +82,15 @@ export function parseFrame(frame: string): SSEEvent | null {
 
 export async function* streamChat(
   body: ChatBody,
+  sessionToken: string,
   signal?: AbortSignal,
 ): AsyncGenerator<SSEEvent> {
   const res = await fetch(`${BASE}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${sessionToken}`,
+    },
     body: JSON.stringify(body),
     signal,
   });

@@ -35,11 +35,16 @@ class Conversation(UUIDPKMixin, TimestampMixin, Base):
         ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
+    # Per-conversation capability token (server-minted, returned once at create).
+    # Acting on a conversation via /api/chat requires presenting it — this binds
+    # the caller to the conversation so a leaked/guessed id alone is not enough.
+    session_token: Mapped[str] = mapped_column(Text, nullable=False)
 
     __table_args__ = (
         CheckConstraint(
             "status IN ('active','resolved','escalated')", name="status_valid"
         ),
+        UniqueConstraint("session_token"),
     )
 
 

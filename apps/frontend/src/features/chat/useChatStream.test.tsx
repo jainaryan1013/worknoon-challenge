@@ -30,10 +30,14 @@ async function* scripted(): AsyncGenerator<SSEEvent> {
 
 describe("useChatStream", () => {
   it("consumes a scripted SSE turn into UI state", async () => {
+    let sentToken: string | null = null;
     const { result } = renderHook(() =>
       useChatStream({
-        stream: () => scripted(),
-        createConv: async () => ({ conversation_id: "c1" }),
+        stream: (_body, token) => {
+          sentToken = token;
+          return scripted();
+        },
+        createConv: async () => ({ conversation_id: "c1", session_token: "tok-123" }),
       }),
     );
 
@@ -42,6 +46,9 @@ describe("useChatStream", () => {
     });
 
     await waitFor(() => expect(result.current.streaming).toBe(false));
+
+    // the capability token from create is forwarded on the stream call
+    expect(sentToken).toBe("tok-123");
 
     // user + assistant bubbles, assistant carries the streamed token
     expect(result.current.messages).toHaveLength(2);
@@ -61,7 +68,7 @@ describe("useChatStream", () => {
       yield { type: "done", data: {} };
     }
     const { result } = renderHook(() =>
-      useChatStream({ stream: () => err(), createConv: async () => ({ conversation_id: "c1" }) }),
+      useChatStream({ stream: () => err(), createConv: async () => ({ conversation_id: "c1", session_token: "tok-123" }) }),
     );
     await act(async () => {
       await result.current.send("hi");

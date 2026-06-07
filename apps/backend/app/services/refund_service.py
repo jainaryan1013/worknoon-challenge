@@ -156,29 +156,39 @@ def process_refund(
         Outcome.ESCALATE: "escalated",
     }[verdict.outcome]
 
-    refunds_repo.create_refund(
-        session,
-        order_id=locked_order.id,
-        order_item_id=locked_item.id,
-        customer_id=verified_customer_id,
-        conversation_id=conversation_id,
-        quantity=verdict.quantity,
-        amount=verdict.amount if verdict.outcome is not Outcome.DENY else Decimal("0.00"),
-        status=status,
-        reason_code=verdict.reason_code.value,
-        reason=verdict.message,
-        policy_refs=list(verdict.policy_refs),
-        decided_by="agent",
-    )
+    # Write-then-verify inside a savepoint so the invariant guard fails CLOSED:
+    # if the re-check trips, the savepoint is rolled back and no refund row can
+    # survive (even though the lock + rule engine make this path unreachable
+    # today). Never leave an over-refund row pending for the caller's COMMIT.
+    nested = session.begin_nested()
+    try:
+        refunds_repo.create_refund(
+            session,
+            order_id=locked_order.id,
+            order_item_id=locked_item.id,
+            customer_id=verified_customer_id,
+            conversation_id=conversation_id,
+            quantity=verdict.quantity,
+            amount=verdict.amount if verdict.outcome is not Outcome.DENY else Decimal("0.00"),
+            status=status,
+            reason_code=verdict.reason_code.value,
+            reason=verdict.message,
+            policy_refs=list(verdict.policy_refs),
+            decided_by="agent",
+        )
 
-    if verdict.outcome is Outcome.APPROVE:
-        # Re-assert the quantity invariant after consuming units (DB §7).
-        approved_after = refunds_repo.approved_units_for_item(session, locked_item.id)
-        if approved_after > locked_item.quantity:
-            raise ServiceError(
-                "refund_conflict",
-                "This refund could not be completed due to a conflict; please try again.",
-            )
+        if verdict.outcome is Outcome.APPROVE:
+            # Re-assert the quantity invariant after consuming units (DB §7).
+            approved_after = refunds_repo.approved_units_for_item(session, locked_item.id)
+            if approved_after > locked_item.quantity:
+                raise ServiceError(
+                    "refund_conflict",
+                    "This refund could not be completed due to a conflict; please try again.",
+                )
+        nested.commit()
+    except ServiceError:
+        nested.rollback()  # drop the just-written row — fail closed
+        raise
 
     if verdict.outcome is Outcome.ESCALATE and conversation_id is not None:
         conv = conversations_repo.get(session, conversation_id)

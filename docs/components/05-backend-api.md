@@ -20,8 +20,8 @@ It does **not** own the loop (#4), tools/rules (#2/#3), or persistence (#1). Aut
 
 | Method | Path | Body / Query | Success |
 |--------|------|--------------|---------|
-| POST | `/api/conversations` | `{}` | `201 { conversation_id, status, created_at }` |
-| POST | `/api/chat` | `{ conversation_id, message }` | `200 text/event-stream` (SSE) |
+| POST | `/api/conversations` | `{}` | `201 { conversation_id, status, created_at, session_token }` |
+| POST | `/api/chat` | `{ conversation_id, message }` + `Authorization: Bearer <session_token>` | `200 text/event-stream` (SSE) |
 | GET | `/api/conversations/{id}` | — | `200 { id, status, customer_name?, messages[] }` |
 | GET | `/api/admin/conversations` | `?status&limit&offset` | `200 { items[], total }` |
 | GET | `/api/admin/conversations/{id}/trace` | — | `200 { conversation, steps[], messages[] }` |
@@ -37,8 +37,10 @@ All identifiers exposed are **human-safe**: `conversation_id` (resource handle),
 
 ### 3.1 Contract
 
-- **Request**: `{ conversation_id: UUID, message: str, selection?: [{ line_ref: str, quantity: int }] }` — `message` non-empty, length-capped (e.g. ≤ 4000 chars). `selection` is optional structured input from a Return Selector confirm (spec #6 §4): the human-readable `message` is stored as the user turn while `selection` is passed to `run_turn` as authoritative per-item input. Each selected item is still re-validated by `process_refund`.
-- **Pre-stream validation** (normal HTTP status, before the stream opens): `422` invalid body, `404` unknown `conversation_id`.
+- **Request**: `{ conversation_id: UUID, message: str, selection?: [{ line_ref: str, quantity: int }] }` — `message` non-empty, length-capped (≤ 4000 chars). `selection` is optional structured input from a Return Selector confirm (spec #6 §4): bounded to ≤ 20 items with `quantity` 1–100. The human-readable `message` is stored as the user turn while `selection` is passed to `run_turn` as authoritative per-item input. Each selected item is still re-validated by `process_refund`.
+- **Capability gate**: the caller must send `Authorization: Bearer <session_token>` (the token minted by `POST /api/conversations`, stored in `conversations.session_token`). This binds the caller to the conversation so a leaked/guessed `conversation_id` alone — e.g. from the unauthenticated admin list — cannot act on it. The token is returned only at creation and never echoed by any read endpoint, the SSE stream, or the admin trace.
+- **Turn cap**: past `MAX_TURNS_PER_CONVERSATION` user turns the endpoint emits an `error` event (`turn_limit_reached`) and `done`, without calling the LLM.
+- **Pre-stream validation** (normal HTTP status, before the stream opens): `422` invalid body; `404` unknown `conversation_id` **or** missing/incorrect token (same opaque `conversation_not_found` code — existence isn't revealed).
 - **Response**: `200`, `Content-Type: text/event-stream`. The body is the agent loop's event stream (spec #4 §5): `token`, `tool_call`, `tool_result`, `decision`, `done`, `error`.
 - **Errors after streaming starts** are delivered as an SSE `error` event, **not** an HTTP error — the status line is already sent. The loop always terminates the stream with `done`.
 

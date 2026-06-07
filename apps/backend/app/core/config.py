@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # --- Agent loop ---
     max_agent_iterations: int = 8
     history_limit: int = -1  # prior messages per turn; -1 = unlimited
+    # Abuse backstop: cap user turns per conversation. Over the cap, chat returns
+    # a clean error without calling the LLM (fail-closed; no unbounded cost).
+    max_turns_per_conversation: int = 50
 
     # --- Lifecycle / infra ---
     seed_enabled: bool = True

@@ -1,9 +1,13 @@
 # DX shortcuts — see docs/repo-structure.md §6.
-.PHONY: up down seed gen-client test test-fe test-adv test-adv-llm test-e2e smoke report report-full lint
+.PHONY: up down reset-db seed gen-client test test-fe test-adv test-adv-llm test-e2e smoke report report-full lint
 CE = docker compose -f docker-compose.e2e.yml
 CT = docker compose -f docker-compose.test.yml
 up:         ; docker-compose up --build
 down:       ; docker-compose down -v
+# Drop the DB volume and rebuild from scratch (re-runs migrations + seed on next
+# `up`). Use after a schema/migration change that can't apply in place. This is
+# the ONLY routine that destroys data — plain `up` never does.
+reset-db:   ; docker-compose down -v && docker-compose up --build
 seed:       ; docker-compose exec backend python -m app.seed.seed
 gen-client: ; ./scripts/gen-api-client.sh
 # Tests run exclusively inside Docker. Backend (pytest + ephemeral Postgres),

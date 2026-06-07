@@ -69,6 +69,8 @@ export interface components {
        * Format: date-time
        */
       created_at: string;
+      /** Session Token */
+      session_token: string;
     };
     /** ConversationDetail */
     ConversationDetail: {
@@ -319,6 +321,11 @@ export interface operations {
   };
   /** Chat */
   chat_api_chat_post: {
+    parameters: {
+      header?: {
+        authorization?: string | null;
+      };
+    };
     requestBody: {
       content: {
         "application/json": components["schemas"]["ChatRequest"];

@@ -218,6 +218,7 @@ Run `make gen-client` after changing any backend schema. One source of truth (Py
 ```
 make up            # docker-compose up --build
 make down          # docker-compose down -v
+make reset-db      # drop the DB volume and rebuild (after a migration/schema change)
 make seed          # re-run seeding against running DB
 make gen-client    # regenerate frontend API client from backend OpenAPI
 make test          # backend (pytest) + frontend (vitest)

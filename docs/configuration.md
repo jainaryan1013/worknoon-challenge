@@ -15,7 +15,8 @@ All variables are read from the environment / `.env` by `app/core/config.py` (py
 | `LLM_TEMPERATURE` | `0` | Sampling temperature. `0` for deterministic decisioning. |
 | `LLM_MAX_TOKENS` | `2048` | Max output tokens. Reasoning models bill hidden reasoning against this cap, so keep headroom for a visible answer. |
 | `MAX_AGENT_ITERATIONS` | `8` | Tool-loop iteration cap. Exhausting it fails closed (escalates), never approves. |
-| `HISTORY_LIMIT` | `-1` | Prior messages fed per turn. `-1` = unlimited (demo default). |
+| `HISTORY_LIMIT` | `-1` | Prior messages fed per turn. `-1` = unlimited (demo default; the turn cap is the cost backstop). |
+| `MAX_TURNS_PER_CONVERSATION` | `50` | Abuse backstop: max user turns per conversation. Past the cap, chat returns an `error` (`turn_limit_reached`) without calling the LLM. `0` disables the cap. |
 | `SEED_ENABLED` | `true` | Run idempotent seeding at startup. Set `false` to boot against an already-populated DB. |
 | `FRONTEND_ORIGIN` | `http://localhost:8080` | The single CORS-allowed origin for the API. |
 | `DATABASE_URL` | `postgresql+psycopg://refund:refund@db:5432/refund` | Sync psycopg v3 DSN. Set by compose from the `POSTGRES_*` vars; the test runner points it at `db-test`. |

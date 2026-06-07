@@ -9,8 +9,10 @@ All routes are mounted under the `/api` prefix. Interactive OpenAPI docs: http:/
 Start a conversation. Returns **201**.
 
 ```json
-{ "conversation_id": "<uuid>", "status": "active", "created_at": "<iso8601>" }
+{ "conversation_id": "<uuid>", "status": "active", "created_at": "<iso8601>", "session_token": "<opaque>" }
 ```
+
+`session_token` is a per-conversation capability token. It is returned **only here** — never by any read endpoint, the SSE stream, or the admin trace. The client must keep it and present it on every `POST /api/chat` for this conversation (see below). This binds the caller to the conversation: a leaked or guessed `conversation_id` alone cannot act on it.
 
 ### `GET /api/conversations/{conversation_id}`
 
@@ -29,7 +31,9 @@ Customer-facing history (user + assistant turns only). **404** if not found.
 
 ### `POST /api/chat`
 
-Runs one agent turn and streams the result as `text/event-stream`. Validation happens before the stream opens: a missing conversation returns a normal **404** (`conversation_not_found`); a malformed body returns **422** (`validation_error`).
+Runs one agent turn and streams the result as `text/event-stream`. Validation happens before the stream opens: a missing conversation **or a missing/incorrect capability token** returns a normal **404** (`conversation_not_found` — the same opaque code either way, so existence isn't revealed); a malformed body returns **422** (`validation_error`).
+
+**Authorization:** required header `Authorization: Bearer <session_token>`, where the token is the one returned by `POST /api/conversations`. Without a matching token the request is rejected (404) before any work.
 
 Request body:
 
@@ -41,7 +45,7 @@ Request body:
 }
 ```
 
-`selection` is optional — it carries the structured items chosen in the Return Selector card back to the agent.
+`selection` is optional — it carries the structured items chosen in the Return Selector card back to the agent. It is bounded: **at most 20 items**, each `quantity` in **1–100** (the tool layer re-validates quantity against the order regardless). Conversations are also capped at `MAX_TURNS_PER_CONVERSATION` user turns; past the cap, chat returns an `error` event (`turn_limit_reached`) without calling the model.
 
 #### SSE events
 

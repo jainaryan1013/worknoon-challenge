@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Message
@@ -15,6 +15,18 @@ def add(session: Session, conversation_id: uuid.UUID, role: str, content: str | 
     session.add(msg)
     session.flush()
     return msg
+
+
+def count_by_role(session: Session, conversation_id: uuid.UUID, role: str) -> int:
+    """Number of messages with `role` in a conversation (turn-cap accounting)."""
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(Message)
+            .where(Message.conversation_id == conversation_id, Message.role == role)
+        )
+        or 0
+    )
 
 
 def history(session: Session, conversation_id: uuid.UUID, limit: int) -> list[Message]:

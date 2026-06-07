@@ -58,10 +58,12 @@ def run_turn(
     now: datetime | None = None,
     max_iterations: int | None = None,
     history_limit: int | None = None,
+    max_turns: int | None = None,
 ) -> Iterator[events.SSEEvent]:
     settings = get_settings()
     max_iterations = max_iterations or settings.max_agent_iterations
     history_limit = settings.history_limit if history_limit is None else history_limit
+    max_turns = settings.max_turns_per_conversation if max_turns is None else max_turns
     now = now or datetime.now(timezone.utc)
     state = {"alive": True}
 
@@ -70,6 +72,24 @@ def run_turn(
     try:
         conv = conversations_repo.get(db, conversation_id)
         verified = conv.customer_id if conv is not None else None
+
+        # Abuse backstop: refuse past the per-conversation turn cap without
+        # calling the LLM (fail-closed — no unbounded token/DB cost).
+        if max_turns > 0 and messages_repo.count_by_role(db, conversation_id, "user") >= max_turns:
+            if state["alive"]:
+                try:
+                    yield events.error(
+                        "turn_limit_reached",
+                        "This conversation has reached its limit. Please start a new chat.",
+                    )
+                except GeneratorExit:
+                    state["alive"] = False
+            if state["alive"]:
+                try:
+                    yield events.done()
+                except GeneratorExit:
+                    state["alive"] = False
+            return
 
         messages_repo.add(db, conversation_id, "user", user_text)
 

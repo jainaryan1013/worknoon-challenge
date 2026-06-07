@@ -23,8 +23,8 @@ export interface SelectorState {
 }
 
 export interface ChatStreamDeps {
-  stream?: (body: ChatBody, signal?: AbortSignal) => AsyncGenerator<SSEEvent>;
-  createConv?: () => Promise<{ conversation_id: string }>;
+  stream?: (body: ChatBody, sessionToken: string, signal?: AbortSignal) => AsyncGenerator<SSEEvent>;
+  createConv?: () => Promise<{ conversation_id: string; session_token: string }>;
 }
 
 export function useChatStream(deps: ChatStreamDeps = {}) {
@@ -40,6 +40,7 @@ export function useChatStream(deps: ChatStreamDeps = {}) {
   const [conversationId, setConversationId] = useState<string | null>(null);
 
   const convIdRef = useRef<string | null>(null);
+  const tokenRef = useRef<string | null>(null);
   const streamingRef = useRef(false);
   const idRef = useRef(0);
   const nextId = () => (idRef.current += 1);
@@ -92,6 +93,7 @@ export function useChatStream(deps: ChatStreamDeps = {}) {
         const created = await createConv();
         convId = created.conversation_id;
         convIdRef.current = convId;
+        tokenRef.current = created.session_token;
         setConversationId(convId);
       }
 
@@ -105,7 +107,10 @@ export function useChatStream(deps: ChatStreamDeps = {}) {
       setToolStatus(null);
 
       try {
-        for await (const ev of stream({ conversation_id: convId, message: text, selection })) {
+        for await (const ev of stream(
+          { conversation_id: convId, message: text, selection },
+          tokenRef.current ?? "",
+        )) {
           handle(ev);
         }
       } catch {

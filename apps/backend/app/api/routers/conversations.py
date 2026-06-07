@@ -19,7 +19,10 @@ router = APIRouter()
 def create_conversation(db: Session = Depends(get_db)) -> ConversationCreated:
     conv = conversations_repo.create(db)
     return ConversationCreated(
-        conversation_id=conv.id, status=conv.status, created_at=conv.created_at
+        conversation_id=conv.id,
+        status=conv.status,
+        created_at=conv.created_at,
+        session_token=conv.session_token,
     )
 
 

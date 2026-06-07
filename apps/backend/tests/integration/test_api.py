@@ -53,10 +53,15 @@ def parse_sse(body: str) -> list[tuple[str, dict]]:
     return events
 
 
-def _new_conversation(tc) -> str:
+def _new_conversation(tc) -> tuple[str, str]:
     r = tc.post("/api/conversations")
     assert r.status_code == 201
-    return r.json()["conversation_id"]
+    body = r.json()
+    return body["conversation_id"], body["session_token"]
+
+
+def _auth(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
 
 
 # --- health -----------------------------------------------------------------
@@ -93,13 +98,14 @@ def test_health_503_when_db_down(client, monkeypatch):
 
 def test_create_and_fetch_conversation_unverified(client):
     tc, _ = client
-    conv_id = _new_conversation(tc)
+    conv_id, _token = _new_conversation(tc)
     r = tc.get(f"/api/conversations/{conv_id}")
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "active"
     assert body["customer_name"] is None  # not verified yet
     assert body["messages"] == []
+    assert "session_token" not in body  # token is never echoed by read endpoints
 
 
 def test_unknown_conversation_returns_error_envelope(client):
@@ -121,7 +127,27 @@ def test_chat_unknown_conversation_404_before_stream(client):
     r = tc.post(
         "/api/chat",
         json={"conversation_id": "00000000-0000-0000-0000-000000000000", "message": "hi"},
+        headers=_auth("any-token"),
     )
+    assert r.status_code == 404
+
+
+def test_chat_wrong_token_is_404(client):
+    tc, _ = client
+    conv_id, _token = _new_conversation(tc)
+    r = tc.post(
+        "/api/chat",
+        json={"conversation_id": conv_id, "message": "hi"},
+        headers=_auth("not-the-real-token"),
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "conversation_not_found"
+
+
+def test_chat_missing_token_is_404(client):
+    tc, _ = client
+    conv_id, _token = _new_conversation(tc)
+    r = tc.post("/api/chat", json={"conversation_id": conv_id, "message": "hi"})
     assert r.status_code == 404
 
 
@@ -138,9 +164,13 @@ def _scripted_refund_client():
 def test_chat_streams_sse_frames_and_decision(client):
     tc, app = client
     app.dependency_overrides[deps.get_llm] = _scripted_refund_client
-    conv_id = _new_conversation(tc)
+    conv_id, token = _new_conversation(tc)
 
-    r = tc.post("/api/chat", json={"conversation_id": conv_id, "message": "refund my mouse"})
+    r = tc.post(
+        "/api/chat",
+        json={"conversation_id": conv_id, "message": "refund my mouse"},
+        headers=_auth(token),
+    )
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/event-stream")
 
@@ -165,8 +195,12 @@ def test_chat_midstream_failure_is_sse_error_not_http_error(client):
             return schemas
 
     app.dependency_overrides[deps.get_llm] = lambda: BrokenClient()
-    conv_id = _new_conversation(tc)
-    r = tc.post("/api/chat", json={"conversation_id": conv_id, "message": "hi"})
+    conv_id, token = _new_conversation(tc)
+    r = tc.post(
+        "/api/chat",
+        json={"conversation_id": conv_id, "message": "hi"},
+        headers=_auth(token),
+    )
     assert r.status_code == 200  # status line already sent; error is in-band
     types = [t for t, _ in parse_sse(r.text)]
     assert "error" in types and types[-1] == "done"
@@ -190,8 +224,12 @@ def test_admin_refunds_and_metrics(client):
 def test_admin_trace_after_chat(client):
     tc, app = client
     app.dependency_overrides[deps.get_llm] = _scripted_refund_client
-    conv_id = _new_conversation(tc)
-    tc.post("/api/chat", json={"conversation_id": conv_id, "message": "refund mouse"})
+    conv_id, token = _new_conversation(tc)
+    tc.post(
+        "/api/chat",
+        json={"conversation_id": conv_id, "message": "refund mouse"},
+        headers=_auth(token),
+    )
 
     r = tc.get(f"/api/admin/conversations/{conv_id}/trace")
     assert r.status_code == 200

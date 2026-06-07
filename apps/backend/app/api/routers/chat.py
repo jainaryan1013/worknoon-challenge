@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,17 @@ _SSE_HEADERS = {
     "X-Accel-Buffering": "no",  # pairs with nginx proxy_buffering off (spec #7)
     "Connection": "keep-alive",
 }
+
+
+def _bearer_token(authorization: str | None) -> str | None:
+    """Extract the capability token from an `Authorization: Bearer <token>`
+    header. Returns None for any malformed/absent header."""
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+    return token.strip()
 
 
 def _stream(conversation_id, message: str, selection, llm) -> Iterator[str]:
@@ -57,9 +68,13 @@ def chat(
     body: ChatRequest,
     db: Session = Depends(get_db),
     llm=Depends(get_llm),
+    authorization: str | None = Header(default=None),
 ) -> StreamingResponse:
-    # Pre-stream validation with normal HTTP status (before the stream opens).
-    if conversations_repo.get(db, body.conversation_id) is None:
+    # Per-conversation capability gate: the caller must present the session
+    # token minted at conversation creation. Mismatch/missing → the same opaque
+    # 404 as a non-existent conversation (don't reveal existence).
+    token = _bearer_token(authorization)
+    if conversations_repo.get_for_session(db, body.conversation_id, token) is None:
         raise HTTPException(
             status_code=404,
             detail={"code": "conversation_not_found", "message": "Conversation not found."},
