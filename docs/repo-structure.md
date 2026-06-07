@@ -153,8 +153,9 @@ apps/frontend/
 │   ├── App.tsx                  # router: /chat, /admin
 │   │
 │   ├── api/
-│   │   ├── generated/           # TS client generated from backend OpenAPI (committed; regen via make gen-client)
-│   │   └── client.ts            # thin wrapper: base URL, SSE helper, error handling
+│   │   ├── generated/schema.ts  # raw openapi-typescript output (regen via make gen-client; never hand-edited)
+│   │   ├── types.ts             # contract bridge: re-exports REST types from generated schema + hand-written SSE union
+│   │   └── client.ts            # thin wrapper over types.ts: base URL, SSE helper, error handling
 │   │
 │   ├── features/
 │   │   ├── chat/
@@ -189,7 +190,7 @@ apps/frontend/
 ### Frontend conventions
 
 - **Feature-folder structure**, not type-folder. Everything for chat lives under `features/chat`; everything for the admin trace under `features/admin`. Shared primitives go to `components/`. This keeps the two screens independently legible.
-- `api/generated/` is produced by `scripts/gen-api-client.sh` from the backend's `/openapi.json`. Hand-written `client.ts` wraps it with the SSE helper (the generator won't handle streaming for us) and error normalization.
+- `api/generated/schema.ts` is produced by `scripts/gen-api-client.sh` from the backend's `/openapi.json`. `types.ts` re-exports those generated REST types (aliasing the few names that differ from the backend classes) and hosts the hand-written SSE union. `client.ts` wraps `types.ts` with the SSE helper (the generator won't handle streaming for us) and error normalization.
 - `useChatStream.ts` is the streaming brain on the client: opens the SSE connection, appends `token` deltas, surfaces `tool_call`/`tool_result` as live status, flips the `DecisionBadge` on the terminal `decision` event.
 
 ---
@@ -200,10 +201,13 @@ apps/frontend/
 Pydantic schemas (apps/backend/app/schemas/*)
         │  FastAPI emits
         ▼
-   /openapi.json  ──── scripts/gen-api-client.sh ────►  apps/frontend/src/api/generated/
+   /openapi.json  ──── scripts/gen-api-client.sh ────►  apps/frontend/src/api/generated/schema.ts
+        │                                                        │  types.ts aliases the REST types
+        │                                                        ▼
+        │                                              apps/frontend/src/api/client.ts + features/*
 ```
 
-Run `make gen-client` after changing any backend schema. One source of truth (Pydantic); the frontend types are derived, never authored. SSE event shapes (`agent/events.py`) are the one piece OpenAPI doesn't fully describe — those are mirrored as a small hand-written TS type in `client.ts`, documented as the single exception.
+Run `make gen-client` after changing any backend schema. One source of truth (Pydantic); the frontend REST types are derived, never authored — `types.ts` aliases the generated `components["schemas"]`, so a schema change after regen surfaces as a TypeScript compile error rather than a silent drift. SSE event shapes (`agent/events.py`) are the one piece OpenAPI doesn't fully describe — those are mirrored as a small hand-written TS union in `types.ts`, documented as the single exception.
 
 ---
 

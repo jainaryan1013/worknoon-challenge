@@ -16,9 +16,12 @@ Stack: React + Vite + TypeScript, Tailwind, React Query for admin reads, a gener
 
 ## 2. API layer (`src/api`)
 
-- `generated/` — TS client + types generated from the backend OpenAPI (committed; `make gen-client`).
-- `client.ts` — thin wrapper: base URL (`VITE_API_BASE_URL`), error normalization, and the **SSE helper** for `/api/chat` (the one piece OpenAPI can't type — its event union is a hand-written TS type mirroring `agent/events.py`).
+- `generated/schema.ts` — raw `openapi-typescript` output, generated from the backend OpenAPI (`make gen-client`). Never hand-edited.
+- `types.ts` — the **contract bridge**. It re-exports the REST request/response types from `generated/schema.ts` (`components["schemas"][…]`) under the names the app uses — a few differ from the backend class names (`SelectionItem`→`Selection`, `RefundOut`→`RefundItem`, `ConversationListItem`→`AdminConversationItem`, `ConversationList`→`AdminConversationList`). It also **hosts the hand-written SSE event union** (`SSEEvent` and its `ReturnSelectorPayload` / `DecisionPayload` / `ReturnItem` / `Eligibility` payloads), which mirror `agent/events.py` — the one part of the API OpenAPI can't describe (an event stream is not a REST body, so it has no schema component to alias).
+- `client.ts` — thin wrapper over `types.ts`: base URL (`VITE_API_BASE_URL`), error normalization, and the **SSE helper** for `/api/chat`.
 - The SSE helper opens the stream via `fetch` + `ReadableStream` (POST body needed, so not `EventSource`), parses `event:/data:` frames, and dispatches typed events to the chat hook.
+
+Because the REST types are *derived* from the generated schema rather than authored, a backend schema change followed by `make gen-client` surfaces any drift as a TypeScript compile error in the consumers, not a silent mismatch. Regenerate after any backend schema change.
 
 ---
 

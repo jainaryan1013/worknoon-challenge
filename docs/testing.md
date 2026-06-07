@@ -30,7 +30,22 @@ make test-adv-llm
 
 Frontend tests (Vitest + Testing Library) live beside their features under `apps/frontend/src`.
 
-## Adversarial / resilience suite
+## Linting
+
+`make lint` runs `ruff check` + `mypy` over the backend, then `tsc --noEmit` over the frontend.
+
+Unlike the test targets, the `lint` target invokes the **backend** tools directly (`ruff`, `mypy`) and therefore expects them on the host (`pip install -e 'apps/backend[dev]'`, or run them inside the test image: `docker compose -f docker-compose.test.yml run --rm test sh -c "ruff check . && mypy app"`). The frontend lint (`tsc`) only needs the frontend `node_modules`.
+
+Current status:
+- **ruff** — clean.
+- **frontend `tsc --noEmit`** — clean (includes the generated `api/generated/schema.ts` consumed via `api/types.ts`).
+- **mypy** — reports outstanding type errors (≈34 across the Anthropic client, a few repositories/services, and tool `verified_customer_id: UUID | None` call sites). Most stem from third-party stub drift (the `anthropic` SDK) and narrow-vs-broad typing gaps; none affect runtime behavior or the offline-of-authority guarantee. Tracked in [`known-gaps.md`](known-gaps.md).
+
+## Frontend API client
+
+The frontend's REST types are generated from the backend OpenAPI (`make gen-client` → `apps/frontend/src/api/generated/schema.ts`) and re-exported through `api/types.ts`; see [`components/06-frontend.md §2`](components/06-frontend.md). The generated `schema.ts` is committed so a fresh clone's frontend build never depends on a running backend or a codegen step. Regenerate (with the backend up on `:8000`) and re-run `tsc` after any backend schema change.
+
+
 
 The suite proves that no prompt — however adversarial — can produce a refund the policy forbids, because every decision is enforced in code, not in the prompt: identity comes from server-side context, amounts are computed not model-supplied, ownership is re-checked, the projected per-order cap is enforced, and the quantity invariant holds under a row lock. `make test-adv` runs the deterministic portion with no API key; `make test-adv-llm` adds a live-model injection corpus.
 
